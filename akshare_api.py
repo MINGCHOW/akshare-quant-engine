@@ -217,31 +217,50 @@ class DataFetcher:
 
     @staticmethod
     def get_hk_share_history(code: str):
-        time.sleep(random.uniform(0.5, 1.5)) # Anti-Blocking
-        symbol = code if len(str(code)) == 5 else f"{int(code):05d}"
-        
-        # 1. Try AkShare
         try:
-            df = ak.stock_hk_daily(symbol=symbol, adjust="qfq")
-            if not df.empty:
-                # Basic cleaning for HK data too
-                df.rename(columns={'日期': 'date', '开盘': 'open', '收盘': 'close', 
-                                   '最高': 'high', '最低': 'low', '成交量': 'volume'}, inplace=True)
-                return DataFetcher._clean_data(df)
-        except: pass
+            time.sleep(random.uniform(0.5, 1.5)) # Anti-Blocking
+            
+            # Safe clean of code
+            clean_code = str(code).strip().upper().replace("HK", "")
+            if not clean_code.isdigit():
+                 # Handle cases like "00700" -> "00700" (fine)
+                 # Handle cases like "HK00700" -> "00700" (fine)
+                 # Handle garbage -> return empty
+                 logger.warning(f"Invalid HK code format: {code}")
+                 return pd.DataFrame()
 
-        # 2. Try Yahoo
-        if yf:
+            symbol = f"{int(clean_code):05d}" # Standardize to 5 chars (e.g. 00700)
+            
+            # 1. Try AkShare
             try:
-                y_symbol = f"{int(symbol):04d}.HK" 
-                ticker = yf.Ticker(y_symbol)
-                df = ticker.history(period="1y")
-                df.reset_index(inplace=True)
-                df.rename(columns={'Date': 'date', 'Open': 'open', 'Close': 'close', 
-                                   'High': 'high', 'Low': 'low', 'Volume': 'volume'}, inplace=True)
-                df['date'] = df['date'].dt.tz_localize(None)
-                return DataFetcher._clean_data(df)
-            except: pass
+                df = ak.stock_hk_daily(symbol=symbol, adjust="qfq")
+                if not df.empty:
+                    df.rename(columns={'日期': 'date', '开盘': 'open', '收盘': 'close', 
+                                       '最高': 'high', '最低': 'low', '成交量': 'volume'}, inplace=True)
+                    return DataFetcher._clean_data(df)
+            except Exception as e:
+                logger.warning(f"AkShare HK failed for {code}: {e}")
+
+            # 2. Try Yahoo
+            if yf:
+                try:
+                    # Yahoo needs 4 digits + .HK usually, or 5 if it's 5 digits. 
+                    # Most HK stocks on Yahoo are 4 digits .HK (e.g. 0700.HK)
+                    # Use safe int conversion
+                    y_symbol = f"{int(clean_code):04d}.HK" 
+                    ticker = yf.Ticker(y_symbol)
+                    df = ticker.history(period="1y")
+                    
+                    if not df.empty:
+                        df.reset_index(inplace=True)
+                        df.rename(columns={'Date': 'date', 'Open': 'open', 'Close': 'close', 
+                                           'High': 'high', 'Low': 'low', 'Volume': 'volume'}, inplace=True)
+                        df['date'] = df['date'].dt.tz_localize(None)
+                        return DataFetcher._clean_data(df)
+                except Exception as e:
+                    logger.warning(f"Yahoo HK failed for {code}: {e}")
+        except Exception as e:
+            logger.error(f"Critical crash in HK fetcher for {code}: {e}")
             
         return pd.DataFrame()
 
