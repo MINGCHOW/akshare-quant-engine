@@ -82,33 +82,53 @@ class DataFetcher:
     """
     @staticmethod
     def _clean_data(df: pd.DataFrame) -> pd.DataFrame:
-        """Standardize column names and types (V8.6 Logic)"""
+        """Standardize column names and types (Universal Gatekeeper V9.1)"""
         try:
-            # Normalize efinance/qstock columns if needed
-            if '日期' in df.columns: df.rename(columns={'日期': 'date'}, inplace=True)
-            if '开盘' in df.columns: df.rename(columns={'开盘': 'open'}, inplace=True)
-            if '收盘' in df.columns: df.rename(columns={'收盘': 'close'}, inplace=True)
-            if '最高' in df.columns: df.rename(columns={'最高': 'high'}, inplace=True)
-            if '最低' in df.columns: df.rename(columns={'最低': 'low'}, inplace=True)
-            if '成交量' in df.columns: df.rename(columns={'成交量': 'volume'}, inplace=True)
-            if '成交' in df.columns: df.rename(columns={'成交': 'volume'}, inplace=True)
+            if df.empty: return pd.DataFrame()
 
-            # Ensure proper columns exist
-            required_cols = {'date', 'open', 'close', 'high', 'low', 'volume'}
-            if not required_cols.issubset(df.columns):
-                return pd.DataFrame() 
+            # 1. Normalize columns to lowercase (Handle 'Date' vs 'date')
+            df.columns = [str(c).lower().strip() for c in df.columns]
 
-            # Standardize date
-            df['date'] = pd.to_datetime(df['date'])
+            # 2. Map Chinese or variant names
+            rename_map = {
+                '日期': 'date', 'time': 'date', 'datetime': 'date',
+                '开盘': 'open', 'open': 'open',
+                '收盘': 'close', 'close': 'close',
+                '最高': 'high', 'high': 'high',
+                '最低': 'low', 'low': 'low',
+                '成交量': 'volume', '成交': 'volume', 'volume': 'volume', 'vol': 'volume'
+            }
+            df.rename(columns=rename_map, inplace=True)
+
+            # 3. Ensure proper columns exist
+            required = {'date', 'open', 'close', 'high', 'low', 'volume'}
+            if not required.issubset(df.columns):
+                # Try to salvage if only volume is missing (set to 0)
+                if required - df.columns == {'volume'}:
+                    df['volume'] = 0
+                else:
+                    return pd.DataFrame()
+
+            # 4. Standardize Date (TZ-Naive)
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            df.dropna(subset=['date'], inplace=True)
+            if df['date'].dt.tz is not None:
+                df['date'] = df['date'].dt.tz_localize(None)
             
-            # Enforce numeric types (Critical for calculation safety)
-            for col in ['open', 'close', 'high', 'low', 'volume']:
+            # 5. Deduplicate and Sort
+            df.drop_duplicates(subset=['date'], keep='last', inplace=True)
+            df.sort_values('date', inplace=True)
+            
+            # 6. Enforce numeric types
+            cols = ['open', 'close', 'high', 'low', 'volume']
+            for col in cols:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             
-            # Drop NaNs created by coercion
             df.dropna(subset=['open', 'close'], inplace=True)
-            return df
-        except:
+            
+            return df[list(required)] # Return clean order
+        except Exception as e:
+            logger.warning(f"Data Cleaning Failed: {e}")
             return pd.DataFrame()
 
     @staticmethod
@@ -170,9 +190,13 @@ class DataFetcher:
                 qt_data = data['data'][full_code]
                 if 'day' in qt_data:
                     k_data = qt_data['day']
-                    df = pd.DataFrame(k_data, columns=['date', 'open', 'close', 'high', 'low', 'volume', 'unknown'])
-                    df = df[['date', 'open', 'close', 'high', 'low', 'volume']]
-                    return DataFetcher._clean_data(df)
+                    # Dynamic parsing: just take first 6 columns
+                    # Date, Open, Close, High, Low, Volume
+                    df = pd.DataFrame(k_data)
+                    if df.shape[1] >= 6:
+                        df = df.iloc[:, :6]
+                        df.columns = ['date', 'open', 'close', 'high', 'low', 'volume']
+                        return DataFetcher._clean_data(df)
         except Exception as e:
             logger.warning(f"Tencent failed: {e}")
 
@@ -213,6 +237,8 @@ class DataFetcher:
         # 5. Baostock (Official)
         if bs:
             try:
+                # Lazy login to prevent timeout
+                bs.login() 
                 logger.info(f"Attempting Baostock (#5) Fallback...")
                 rs = bs.query_history_k_data_plus(f"{market_prefix}.{symbol}",
                     "date,open,high,low,close,volume",
@@ -223,6 +249,8 @@ class DataFetcher:
                 data_list = []
                 while (rs.error_code == '0') & rs.next():
                     data_list.append(rs.get_row_data())
+                
+                bs.logout() # Cleanup
                 
                 if data_list:
                     df = pd.DataFrame(data_list, columns=rs.fields)
