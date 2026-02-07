@@ -48,7 +48,54 @@ except ImportError:
 from fake_useragent import UserAgent
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-app = FastAPI(title="AkShare Quant API V9.0 (Titan Edition)", version="9.0")
+app = FastAPI(title="AkShare Quant API V9.0 (Titan Edition) + V8.0 Evolution", version="9.1")
+
+# --- V8.0 Evolution: Circuit Breaker & Error Tracking ---
+error_counter = {
+    "count": 0, 
+    "last_error": None,
+    "last_reset": datetime.datetime.now(),
+    "circuit_open": False
+}
+
+async def send_emergency_alert(error_msg: str):
+    """
+    V8.0 P0: 发送紧急告警 (飞书加急消息)
+    实际部署时替换为真实的飞书 Webhook
+    """
+    logger.critical(f"🔴 CIRCUIT BREAKER TRIGGERED: {error_msg}")
+    # TODO: 实现飞书加急消息推送
+    # webhook_url = os.getenv("FEISHU_ALERT_WEBHOOK")
+    # if webhook_url:
+    #     requests.post(webhook_url, json={
+    #         "msg_type": "text",
+    #         "content": {"text": f"🚨 API熔断告警: {error_msg}"}
+    #     })
+
+def reset_circuit_breaker():
+    """重置熔断器"""
+    global error_counter
+    error_counter["count"] = 0
+    error_counter["circuit_open"] = False
+    error_counter["last_reset"] = datetime.datetime.now()
+
+def record_error(error_msg: str):
+    """记录错误并检查是否需要触发熔断"""
+    global error_counter
+    error_counter["count"] += 1
+    error_counter["last_error"] = error_msg
+    
+    if error_counter["count"] >= 3 and not error_counter["circuit_open"]:
+        error_counter["circuit_open"] = True
+        import asyncio
+        asyncio.create_task(send_emergency_alert(error_msg))
+
+def record_success():
+    """成功时重置错误计数"""
+    global error_counter
+    if error_counter["count"] > 0:
+        error_counter["count"] = 0
+        error_counter["circuit_open"] = False
 
 # --- Constants ---
 # Dynamic User-Agent Generator
@@ -501,18 +548,123 @@ def generate_signal(tech, is_hk=False):
     }
 
 # --- Endpoints ---
+
+# V8.0 P0: Health Check Endpoint
+@app.get("/health")
+def health_check():
+    """
+    V8.0 P0: 系统健康检查
+    - 检查数据源可用性
+    - 返回熔断器状态
+    - 返回系统延迟
+    """
+    start_time = time.time()
+    checks = {}
+    overall_status = "healthy"
+    
+    # 1. 数据源检查 (快速测试)
+    try:
+        test_df = DataFetcher.get_a_share_history("000001")
+        if test_df.empty:
+            checks["data_source"] = {"status": "warning", "message": "Empty data returned"}
+            overall_status = "degraded"
+        else:
+            checks["data_source"] = {"status": "ok", "rows": len(test_df)}
+            record_success()  # 成功时重置错误计数
+    except Exception as e:
+        checks["data_source"] = {"status": "error", "message": str(e)}
+        overall_status = "degraded"
+        record_error(str(e))
+    
+    # 2. 熔断器状态
+    checks["circuit_breaker"] = {
+        "error_count": error_counter["count"],
+        "is_open": error_counter["circuit_open"],
+        "last_error": error_counter["last_error"],
+        "last_reset": error_counter["last_reset"].isoformat() if error_counter["last_reset"] else None
+    }
+    
+    if error_counter["circuit_open"]:
+        overall_status = "critical"
+    
+    # 3. 可选库检查
+    checks["optional_libs"] = {
+        "efinance": ef is not None,
+        "yfinance": yf is not None,
+        "pytdx": tdx_api is not None,
+        "baostock": bs is not None,
+        "qstock": qs is not None
+    }
+    
+    latency_ms = int((time.time() - start_time) * 1000)
+    
+    return {
+        "status": overall_status,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "latency_ms": latency_ms,
+        "checks": checks,
+        "version": "9.1 + V8.0 Evolution"
+    }
+
+# V8.0 P0: Reset Circuit Breaker (Manual)
+@app.post("/health/reset")
+def reset_health():
+    """手动重置熔断器"""
+    reset_circuit_breaker()
+    return {"status": "ok", "message": "Circuit breaker reset"}
+
+# V8.0 P1: Enhanced Market Status
 @app.get("/market")
 def get_market_context():
+    """
+    V8.0 P1: 增强版大盘状态
+    - 新增涨跌家数统计
+    - 新增市场冰点标记
+    """
     try:
-        time.sleep(random.uniform(0.5, 1.0)) # Anti-bot
+        time.sleep(random.uniform(0.5, 1.0))  # Anti-bot
+        
+        # 指数数据
         index_df = ak.stock_zh_index_daily(symbol="sh000001")
-        if index_df.empty: raise ValueError("Index Data Empty")
+        if index_df.empty:
+            raise ValueError("Index Data Empty")
         price = float(index_df['close'].iloc[-1])
         ma20 = float(index_df['close'].rolling(20).mean().iloc[-1])
         status = "Bull" if price > ma20 else "Bear"
-        return {"market_status": status, "index_price": safe_round(price), "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+        
+        # V8.0 P1: 涨跌家数统计
+        up_count, down_count, flat_count = 0, 0, 0
+        try:
+            stats = ak.stock_zh_a_spot_em()
+            if not stats.empty and '涨跌幅' in stats.columns:
+                up_count = len(stats[stats['涨跌幅'] > 0])
+                down_count = len(stats[stats['涨跌幅'] < 0])
+                flat_count = len(stats[stats['涨跌幅'] == 0])
+        except Exception as e:
+            logger.warning(f"Failed to get up/down count: {e}")
+        
+        # 市场冰点判断 (上涨家数 < 800)
+        is_frozen = up_count > 0 and up_count < 800
+        
+        # 调整市场状态 (极端冰点时强制标记)
+        if is_frozen:
+            status = "Crash" if up_count < 500 else "Bear"
+        
+        return {
+            "market_status": status,
+            "index_price": safe_round(price),
+            "ma20": safe_round(ma20),
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            # V8.0 P1 新增字段
+            "up_count": up_count,
+            "down_count": down_count,
+            "flat_count": flat_count,
+            "up_down_ratio": safe_round(up_count / max(down_count, 1)),
+            "is_frozen": is_frozen
+        }
     except Exception as e:
-        return {"market_status": "Correction", "error": str(e)}
+        record_error(str(e))
+        return {"market_status": "Correction", "error": str(e), "is_frozen": False}
 
 @app.post("/analyze_full")
 def analyze_full(req: AnalyzeRequest):
@@ -580,8 +732,205 @@ def analyze_full(req: AnalyzeRequest):
         }
     except Exception as e:
         logger.error(traceback.format_exc())
+        record_error(str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- V8.0 P2: Portfolio Management Models ---
+class PositionItem(BaseModel):
+    code: str
+    market: str = "CN"
+    buy_price: float
+    current_stop: float
+    target_price: float
+
+class PositionCheckRequest(BaseModel):
+    positions: list[PositionItem]
+
+class SignalItem(BaseModel):
+    code: str
+    signal_date: str  # YYYY-MM-DD
+    entry_price: float
+    stop_loss: float
+    take_profit: float
+    signal_result: str = "进行中"
+
+class SignalSettleRequest(BaseModel):
+    signals: list[SignalItem]
+
+# V8.0 P2: Check Positions Endpoint
+@app.post("/check_positions")
+def check_positions(req: PositionCheckRequest):
+    """
+    V8.0 P2: 批量检查持仓状态
+    - 判断是否触发止损/止盈
+    - 计算移动止损价
+    - 返回操作建议
+    """
+    results = []
+    
+    for pos in req.positions:
+        try:
+            code = pos.code
+            is_hk = len(str(code)) == 5 or pos.market == "HK"
+            
+            # 获取最新价
+            if is_hk:
+                df = DataFetcher.get_hk_share_history(code)
+            else:
+                df = DataFetcher.get_a_share_history(code)
+            
+            if df.empty:
+                results.append({
+                    "code": code,
+                    "action": "ERROR",
+                    "reason": "无法获取数据",
+                    "current_price": None,
+                    "new_stop": None
+                })
+                continue
+            
+            current_price = float(df['close'].iloc[-1])
+            current_stop = pos.current_stop
+            target = pos.target_price
+            buy_price = pos.buy_price
+            
+            # 判断状态
+            if current_price <= current_stop:
+                action = "SELL_STOP"
+                reason = f"🔴 触发止损 (现价 {current_price:.2f} ≤ 止损 {current_stop:.2f})"
+                pnl = (current_price - buy_price) / buy_price * 100
+                new_stop = None
+            elif current_price >= target:
+                action = "SELL_TARGET"
+                reason = f"🟢 触发止盈 (现价 {current_price:.2f} ≥ 目标 {target:.2f})"
+                pnl = (current_price - buy_price) / buy_price * 100
+                new_stop = None
+            else:
+                action = "HOLD"
+                # 移动止损: 价格上涨时提高止损 (保护7%利润)
+                trailing_stop = current_price * 0.93
+                new_stop = max(current_stop, trailing_stop)
+                
+                if new_stop > current_stop:
+                    reason = f"📈 上调止损 ({current_stop:.2f} → {new_stop:.2f})"
+                else:
+                    reason = f"继续持有 (现价 {current_price:.2f})"
+                
+                pnl = (current_price - buy_price) / buy_price * 100
+            
+            results.append({
+                "code": code,
+                "current_price": safe_round(current_price),
+                "action": action,
+                "reason": reason,
+                "pnl_percent": safe_round(pnl),
+                "new_stop": safe_round(new_stop) if new_stop else None
+            })
+            
+        except Exception as e:
+            logger.error(f"Position check error for {pos.code}: {e}")
+            results.append({
+                "code": pos.code,
+                "action": "ERROR",
+                "reason": str(e),
+                "current_price": None,
+                "new_stop": None
+            })
+    
+    return {"positions": results, "timestamp": datetime.datetime.now().isoformat()}
+
+# V8.0 P2.5: Settle Signals Endpoint
+@app.post("/settle_signals")
+def settle_signals(req: SignalSettleRequest):
+    """
+    V8.0 P2.5: 结算历史信号
+    - 判断信号是否成功/失败/超时
+    - 计算实际收益率
+    - 返回结算结果
+    """
+    results = []
+    
+    for sig in req.signals:
+        # 跳过已结算的信号
+        if sig.signal_result != "进行中":
+            results.append({
+                "code": sig.code,
+                "signal_result": sig.signal_result,
+                "action": "SKIP",
+                "reason": "已结算"
+            })
+            continue
+        
+        try:
+            code = sig.code
+            is_hk = len(str(code)) == 5
+            
+            # 获取最新价
+            if is_hk:
+                df = DataFetcher.get_hk_share_history(code)
+            else:
+                df = DataFetcher.get_a_share_history(code)
+            
+            if df.empty:
+                results.append({
+                    "code": code,
+                    "signal_result": "进行中",
+                    "action": "ERROR",
+                    "reason": "无法获取数据"
+                })
+                continue
+            
+            current_price = float(df['close'].iloc[-1])
+            entry = sig.entry_price
+            stop = sig.stop_loss
+            target = sig.take_profit
+            
+            # 计算持仓天数
+            try:
+                signal_date = datetime.datetime.strptime(sig.signal_date, "%Y-%m-%d")
+                days_held = (datetime.datetime.now() - signal_date).days
+            except:
+                days_held = 0
+            
+            # 判断结果
+            if current_price >= target:
+                result = "成功 ✅"
+                pnl = (target - entry) / entry * 100
+                action = "SETTLED"
+            elif current_price <= stop:
+                result = "失败 ❌"
+                pnl = (stop - entry) / entry * 100
+                action = "SETTLED"
+            elif days_held > 20:
+                result = "超时 ⏰"
+                pnl = (current_price - entry) / entry * 100
+                action = "SETTLED"
+            else:
+                result = "进行中 ⏳"
+                pnl = (current_price - entry) / entry * 100
+                action = "PENDING"
+            
+            results.append({
+                "code": code,
+                "signal_result": result,
+                "action": action,
+                "current_price": safe_round(current_price),
+                "pnl_percent": safe_round(pnl),
+                "days_held": days_held
+            })
+            
+        except Exception as e:
+            logger.error(f"Signal settle error for {sig.code}: {e}")
+            results.append({
+                "code": sig.code,
+                "signal_result": "进行中",
+                "action": "ERROR",
+                "reason": str(e)
+            })
+    
+    return {"signals": results, "timestamp": datetime.datetime.now().isoformat()}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
+
