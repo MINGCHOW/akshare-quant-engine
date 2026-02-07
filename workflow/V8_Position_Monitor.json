@@ -235,7 +235,7 @@
             {
               "id": "stop-update-check",
               "leftValue": "={{ $('拆分检查结果').item.json.new_stop }}",
-              "rightValue": "={{ $('拆分检查结果').item.json.current_stop || 0 }}",
+              "rightValue": 0,
               "operator": {
                 "type": "number",
                 "operation": "gt"

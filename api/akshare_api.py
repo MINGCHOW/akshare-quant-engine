@@ -820,9 +820,9 @@ def check_positions(req: PositionCheckRequest):
                 
                 pnl = (current_price - buy_price) / buy_price * 100
 
-            # 计算盈亏金额 (手数 × 100股 × 价差)
+            # 计算盈亏金额 (直接使用输入的股数)
             shares = pos.shares if pos.shares > 0 else 0
-            pnl_amount = (current_price - buy_price) * shares * 100 if shares > 0 else 0
+            pnl_amount = (current_price - buy_price) * shares if shares > 0 else 0
             
             results.append({
                 "code": code,
