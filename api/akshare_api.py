@@ -742,6 +742,7 @@ class PositionItem(BaseModel):
     buy_price: float
     current_stop: float
     target_price: float
+    shares: int = 0  # 买入手数，用于计算盈亏金额
     record_id: str = ""  # 飞书记录ID，用于回写更新
 
 class PositionCheckRequest(BaseModel):
@@ -819,6 +820,9 @@ def check_positions(req: PositionCheckRequest):
                 
                 pnl = (current_price - buy_price) / buy_price * 100
 
+            # 计算盈亏金额 (手数 × 100股 × 价差)
+            shares = pos.shares if pos.shares > 0 else 0
+            pnl_amount = (current_price - buy_price) * shares * 100 if shares > 0 else 0
             
             results.append({
                 "code": code,
@@ -826,6 +830,7 @@ def check_positions(req: PositionCheckRequest):
                 "action": action,
                 "reason": reason,
                 "pnl_percent": safe_round(pnl),
+                "pnl_amount": safe_round(pnl_amount),  # 盈亏金额
                 "new_stop": safe_round(new_stop) if new_stop else None,
                 "record_id": pos.record_id  # 传递飞书记录ID用于回写
             })
