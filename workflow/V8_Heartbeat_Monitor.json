@@ -12,7 +12,7 @@
                     ]
                 }
             },
-            "id": "heartbeat-trigger",
+            "id": "55eff146-43cc-4116-9834-ae202706431a",
             "name": "每小时心跳 (可改为每日09:00)",
             "type": "n8n-nodes-base.scheduleTrigger",
             "typeVersion": 1.2,
@@ -23,20 +23,24 @@
         },
         {
             "parameters": {
-                "method": "GET",
-                "url": "={{ $env.AKSHARE_API_URL }}/health",
+                "url": "https://jpthermjdexc.ap-northeast-1.clawcloudrun.com/health",
                 "options": {
                     "timeout": 30000
                 }
             },
-            "id": "health-check",
+            "id": "40451dc7-5de4-40ca-908a-a7f263b4afbb",
             "name": "调用 /health 端点",
             "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
+            "typeVersion": 4.1,
             "position": [
                 420,
                 300
-            ]
+            ],
+            "retryOnFail": true,
+            "maxTries": 3,
+            "waitBetweenTries": 5000,
+            "alwaysOutputData": true,
+            "onError": "continueRegularOutput"
         },
         {
             "parameters": {
@@ -61,7 +65,7 @@
                 },
                 "options": {}
             },
-            "id": "check-status",
+            "id": "check-status-001",
             "name": "检查状态是否异常",
             "type": "n8n-nodes-base.if",
             "typeVersion": 2,
@@ -72,32 +76,91 @@
         },
         {
             "parameters": {
-                "method": "POST",
-                "url": "={{ $env.FEISHU_WEBHOOK_URL }}",
-                "sendBody": true,
-                "specifyBody": "json",
-                "jsonBody": "={\n  \"msg_type\": \"interactive\",\n  \"card\": {\n    \"header\": {\n      \"title\": {\n        \"tag\": \"plain_text\",\n        \"content\": \"🔴 系统健康警报\"\n      },\n      \"template\": \"red\"\n    },\n    \"elements\": [\n      {\n        \"tag\": \"div\",\n        \"text\": {\n          \"tag\": \"lark_md\",\n          \"content\": \"**状态**: {{ $json.status }}\\n**时间**: {{ $json.timestamp }}\\n**延迟**: {{ $json.latency_ms }}ms\"\n        }\n      },\n      {\n        \"tag\": \"div\",\n        \"text\": {\n          \"tag\": \"lark_md\",\n          \"content\": \"**熔断器**: 错误次数 {{ $json.checks.circuit_breaker.error_count }}\\n**已触发**: {{ $json.checks.circuit_breaker.is_open }}\"\n        }\n      },\n      {\n        \"tag\": \"hr\"\n      },\n      {\n        \"tag\": \"div\",\n        \"text\": {\n          \"tag\": \"lark_md\",\n          \"content\": \"⚠️ 请立即检查 API 服务状态\"\n        }\n      }\n    ]\n  }\n}",
-                "options": {}
+                "mode": "runOnceForEachItem",
+                "jsCode": "// 直接从 HTTP 请求节点获取数据\nlet data = {};\ntry {\n    data = $('调用 /health 端点').first().json;\n} catch (e) {\n    data = $json;\n}\n\nconst status = data.status || '未知';\nconst timestamp = data.timestamp || new Date().toISOString();\nconst latencyMs = data.latency_ms || 0;\nconst errorCount = data.checks?.circuit_breaker?.error_count || 0;\nconst isOpen = data.checks?.circuit_breaker?.is_open || false;\n\nconst cardContent = [\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `**状态**: ${status}\\n**时间**: ${timestamp}\\n**延迟**: ${latencyMs}ms`\n    }\n  },\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `**熔断器错误**: ${errorCount} 次\\n**已触发熔断**: ${isOpen}`\n    }\n  },\n  { tag: 'hr' },\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: '⚠️ 请立即检查 API 服务状态'\n    }\n  }\n];\n\nreturn {\n  json: {\n    card_color: 'red',\n    card_content: cardContent,\n    header_title: '🔴 系统健康警报'\n  }\n};"
             },
-            "id": "send-alert",
-            "name": "发送飞书告警",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
+            "id": "build-alert-card",
+            "name": "构建告警卡片",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
             "position": [
                 860,
                 200
-            ]
+            ],
+            "alwaysOutputData": true
         },
         {
-            "parameters": {},
-            "id": "no-action",
-            "name": "正常 - 无操作",
-            "type": "n8n-nodes-base.noOp",
+            "parameters": {
+                "resource": "message",
+                "operation": "message:send",
+                "receive_id_type": "user_id",
+                "receive_id": "bg99a8dc",
+                "msg_type": "interactive",
+                "content": "={{\nJSON.stringify({\n  \"config\": {\n    \"wide_screen_mode\": true\n  },\n  \"header\": {\n    \"template\": $json.card_color,\n    \"title\": {\n      \"content\": $json.header_title,\n      \"tag\": \"plain_text\"\n    }\n  },\n  \"elements\": $json.card_content\n})\n}}"
+            },
+            "id": "send-alert-feishu",
+            "name": "发送飞书告警",
+            "type": "n8n-nodes-feishu-lite.feishuNode",
             "typeVersion": 1,
+            "position": [
+                1080,
+                200
+            ],
+            "alwaysOutputData": true,
+            "retryOnFail": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000,
+            "credentials": {
+                "feishuCredentialsApi": {
+                    "id": "RcP0KB4O5l2Y95Bs",
+                    "name": "Feishu account 2"
+                }
+            },
+            "onError": "continueRegularOutput"
+        },
+        {
+            "parameters": {
+                "mode": "runOnceForEachItem",
+                "jsCode": "// 直接从 HTTP 请求节点获取数据\nlet data = {};\ntry {\n    data = $('调用 /health 端点').first().json;\n} catch (e) {\n    data = $json;\n}\n\nconst status = data.status || '未知';\nconst timestamp = data.timestamp || new Date().toISOString();\nconst latencyMs = data.latency_ms || 0;\nconst version = data.version || 'unknown';\n\nconst cardContent = [\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `**状态**: ${status} ✅\\n**时间**: ${timestamp}\\n**延迟**: ${latencyMs}ms`\n    }\n  },\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `**版本**: ${version}`\n    }\n  },\n  { tag: 'hr' },\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: '✅ 系统运行正常'\n    }\n  }\n];\n\nreturn {\n  json: {\n    card_color: 'green',\n    card_content: cardContent,\n    header_title: '🟢 系统健康报告'\n  }\n};"
+            },
+            "id": "build-healthy-card",
+            "name": "构建正常卡片",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
             "position": [
                 860,
                 400
-            ]
+            ],
+            "alwaysOutputData": true
+        },
+        {
+            "parameters": {
+                "resource": "message",
+                "operation": "message:send",
+                "receive_id_type": "user_id",
+                "receive_id": "bg99a8dc",
+                "msg_type": "interactive",
+                "content": "={{\nJSON.stringify({\n  \"config\": {\n    \"wide_screen_mode\": true\n  },\n  \"header\": {\n    \"template\": $json.card_color,\n    \"title\": {\n      \"content\": $json.header_title,\n      \"tag\": \"plain_text\"\n    }\n  },\n  \"elements\": $json.card_content\n})\n}}"
+            },
+            "id": "send-healthy-feishu",
+            "name": "发送正常通知",
+            "type": "n8n-nodes-feishu-lite.feishuNode",
+            "typeVersion": 1,
+            "position": [
+                1080,
+                400
+            ],
+            "alwaysOutputData": true,
+            "retryOnFail": true,
+            "maxTries": 3,
+            "waitBetweenTries": 2000,
+            "credentials": {
+                "feishuCredentialsApi": {
+                    "id": "RcP0KB4O5l2Y95Bs",
+                    "name": "Feishu account 2"
+                }
+            },
+            "onError": "continueRegularOutput"
         }
     ],
     "connections": {
@@ -127,14 +190,36 @@
             "main": [
                 [
                     {
-                        "node": "发送飞书告警",
+                        "node": "构建告警卡片",
                         "type": "main",
                         "index": 0
                     }
                 ],
                 [
                     {
-                        "node": "正常 - 无操作",
+                        "node": "构建正常卡片",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "构建告警卡片": {
+            "main": [
+                [
+                    {
+                        "node": "发送飞书告警",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "构建正常卡片": {
+            "main": [
+                [
+                    {
+                        "node": "发送正常通知",
                         "type": "main",
                         "index": 0
                     }
@@ -150,7 +235,7 @@
         "templateCredsSetupCompleted": true
     },
     "pinData": {},
-    "versionId": "v8.0-heartbeat-v1",
+    "versionId": "v8.0-heartbeat-v4",
     "triggerCount": 0,
     "tags": []
 }

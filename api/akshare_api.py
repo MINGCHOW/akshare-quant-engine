@@ -742,6 +742,7 @@ class PositionItem(BaseModel):
     buy_price: float
     current_stop: float
     target_price: float
+    record_id: str = ""  # 飞书记录ID，用于回写更新
 
 class PositionCheckRequest(BaseModel):
     positions: list[PositionItem]
@@ -794,13 +795,13 @@ def check_positions(req: PositionCheckRequest):
             target = pos.target_price
             buy_price = pos.buy_price
             
-            # 判断状态
-            if current_price <= current_stop:
+            # 判断状态 (注意: 0 表示"未设定", 跳过对应检查)
+            if current_stop > 0 and current_price <= current_stop:
                 action = "SELL_STOP"
                 reason = f"🔴 触发止损 (现价 {current_price:.2f} ≤ 止损 {current_stop:.2f})"
                 pnl = (current_price - buy_price) / buy_price * 100
                 new_stop = None
-            elif current_price >= target:
+            elif target > 0 and current_price >= target:
                 action = "SELL_TARGET"
                 reason = f"🟢 触发止盈 (现价 {current_price:.2f} ≥ 目标 {target:.2f})"
                 pnl = (current_price - buy_price) / buy_price * 100
@@ -809,14 +810,15 @@ def check_positions(req: PositionCheckRequest):
                 action = "HOLD"
                 # 移动止损: 价格上涨时提高止损 (保护7%利润)
                 trailing_stop = current_price * 0.93
-                new_stop = max(current_stop, trailing_stop)
+                new_stop = max(current_stop, trailing_stop) if current_stop > 0 else trailing_stop
                 
-                if new_stop > current_stop:
+                if current_stop > 0 and new_stop > current_stop:
                     reason = f"📈 上调止损 ({current_stop:.2f} → {new_stop:.2f})"
                 else:
                     reason = f"继续持有 (现价 {current_price:.2f})"
                 
                 pnl = (current_price - buy_price) / buy_price * 100
+
             
             results.append({
                 "code": code,
@@ -824,7 +826,8 @@ def check_positions(req: PositionCheckRequest):
                 "action": action,
                 "reason": reason,
                 "pnl_percent": safe_round(pnl),
-                "new_stop": safe_round(new_stop) if new_stop else None
+                "new_stop": safe_round(new_stop) if new_stop else None,
+                "record_id": pos.record_id  # 传递飞书记录ID用于回写
             })
             
         except Exception as e:

@@ -1,325 +1,436 @@
 {
-    "name": "V8.0 投后盯盘工作流",
-    "nodes": [
-        {
-            "parameters": {
-                "rule": {
-                    "interval": [
-                        {
-                            "field": "cronExpression",
-                            "expression": "10 15 * * 1-5"
-                        }
-                    ]
-                }
-            },
-            "id": "position-trigger",
-            "name": "每日15:10触发 (工作日)",
-            "type": "n8n-nodes-base.scheduleTrigger",
-            "typeVersion": 1.2,
-            "position": [
-                200,
-                300
-            ]
-        },
-        {
-            "parameters": {
-                "operation": "search",
-                "app_token": "={{ $env.FEISHU_APP_TOKEN }}",
-                "table": "持仓管理",
-                "filter": {
-                    "conjunction": "and",
-                    "conditions": [
-                        {
-                            "field_name": "持仓状态",
-                            "operator": "is",
-                            "value": [
-                                "持仓"
-                            ]
-                        }
-                    ]
-                }
-            },
-            "id": "read-positions",
-            "name": "读取飞书【持仓管理】",
-            "type": "n8n-nodes-base.feishuBitable",
-            "typeVersion": 1,
-            "position": [
-                420,
-                300
-            ],
-            "credentials": {
-                "feishuBitableApi": {
-                    "id": "feishu-credentials",
-                    "name": "Feishu Bitable"
-                }
+  "name": "V8.0 投后盯盘工作流",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "10 15 * * 1-5"
             }
-        },
-        {
-            "parameters": {
-                "jsCode": "// 转换飞书记录为 API 请求格式\nconst items = $input.all();\nconst positions = items.map(item => ({\n  code: item.json.fields['代码'],\n  market: item.json.fields['市场'] || 'CN',\n  buy_price: parseFloat(item.json.fields['买入价']) || 0,\n  current_stop: parseFloat(item.json.fields['当前止损']) || 0,\n  target_price: parseFloat(item.json.fields['目标价']) || 0,\n  record_id: item.json.record_id  // 用于后续更新\n}));\n\nreturn [{ json: { positions } }];"
-            },
-            "id": "transform-data",
-            "name": "转换数据格式",
-            "type": "n8n-nodes-base.code",
-            "typeVersion": 2,
-            "position": [
-                640,
-                300
-            ]
-        },
-        {
-            "parameters": {
-                "method": "POST",
-                "url": "={{ $env.AKSHARE_API_URL }}/check_positions",
-                "sendBody": true,
-                "specifyBody": "json",
-                "jsonBody": "={{ JSON.stringify($json) }}",
-                "options": {
-                    "timeout": 120000
-                }
-            },
-            "id": "check-positions-api",
-            "name": "调用 /check_positions",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
-            "position": [
-                860,
-                300
-            ]
-        },
-        {
-            "parameters": {
-                "fieldToSplitOut": "positions",
-                "options": {}
-            },
-            "id": "split-results",
-            "name": "拆分检查结果",
-            "type": "n8n-nodes-base.splitOut",
-            "typeVersion": 1,
-            "position": [
-                1080,
-                300
-            ]
-        },
-        {
-            "parameters": {
-                "conditions": {
-                    "options": {
-                        "caseSensitive": true,
-                        "leftValue": "",
-                        "typeValidation": "strict"
-                    },
-                    "conditions": [
-                        {
-                            "id": "stop-loss-check",
-                            "leftValue": "={{ $json.action }}",
-                            "rightValue": "SELL_STOP",
-                            "operator": {
-                                "type": "string",
-                                "operation": "equals"
-                            }
-                        }
-                    ],
-                    "combinator": "or"
-                },
-                "options": {}
-            },
-            "id": "check-stop-loss",
-            "name": "检查是否止损",
-            "type": "n8n-nodes-base.if",
-            "typeVersion": 2,
-            "position": [
-                1300,
-                200
-            ]
-        },
-        {
-            "parameters": {
-                "conditions": {
-                    "options": {
-                        "caseSensitive": true,
-                        "leftValue": "",
-                        "typeValidation": "strict"
-                    },
-                    "conditions": [
-                        {
-                            "id": "target-check",
-                            "leftValue": "={{ $json.action }}",
-                            "rightValue": "SELL_TARGET",
-                            "operator": {
-                                "type": "string",
-                                "operation": "equals"
-                            }
-                        }
-                    ],
-                    "combinator": "or"
-                },
-                "options": {}
-            },
-            "id": "check-target",
-            "name": "检查是否止盈",
-            "type": "n8n-nodes-base.if",
-            "typeVersion": 2,
-            "position": [
-                1300,
-                400
-            ]
-        },
-        {
-            "parameters": {
-                "method": "POST",
-                "url": "={{ $env.FEISHU_WEBHOOK_URL }}",
-                "sendBody": true,
-                "specifyBody": "json",
-                "jsonBody": "={\n  \"msg_type\": \"interactive\",\n  \"card\": {\n    \"header\": {\n      \"title\": {\n        \"tag\": \"plain_text\",\n        \"content\": \"🔴 止损警报: {{ $json.code }}\"\n      },\n      \"template\": \"red\"\n    },\n    \"elements\": [\n      {\n        \"tag\": \"div\",\n        \"text\": {\n          \"tag\": \"lark_md\",\n          \"content\": \"**现价**: {{ $json.current_price }}\\n**原因**: {{ $json.reason }}\\n**收益率**: {{ $json.pnl_percent }}%\"\n        }\n      },\n      {\n        \"tag\": \"hr\"\n      },\n      {\n        \"tag\": \"div\",\n        \"text\": {\n          \"tag\": \"lark_md\",\n          \"content\": \"⚠️ **建议立即卖出止损**\"\n        }\n      }\n    ]\n  }\n}",
-                "options": {}
-            },
-            "id": "send-stop-alert",
-            "name": "发送止损警报",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
-            "position": [
-                1520,
-                100
-            ]
-        },
-        {
-            "parameters": {
-                "method": "POST",
-                "url": "={{ $env.FEISHU_WEBHOOK_URL }}",
-                "sendBody": true,
-                "specifyBody": "json",
-                "jsonBody": "={\n  \"msg_type\": \"interactive\",\n  \"card\": {\n    \"header\": {\n      \"title\": {\n        \"tag\": \"plain_text\",\n        \"content\": \"🟢 止盈达标: {{ $json.code }}\"\n      },\n      \"template\": \"green\"\n    },\n    \"elements\": [\n      {\n        \"tag\": \"div\",\n        \"text\": {\n          \"tag\": \"lark_md\",\n          \"content\": \"**现价**: {{ $json.current_price }}\\n**原因**: {{ $json.reason }}\\n**收益率**: {{ $json.pnl_percent }}%\"\n        }\n      },\n      {\n        \"tag\": \"hr\"\n      },\n      {\n        \"tag\": \"div\",\n        \"text\": {\n          \"tag\": \"lark_md\",\n          \"content\": \"🎯 **恭喜达到目标价！**\"\n        }\n      }\n    ]\n  }\n}",
-                "options": {}
-            },
-            "id": "send-target-alert",
-            "name": "发送止盈通知",
-            "type": "n8n-nodes-base.httpRequest",
-            "typeVersion": 4.2,
-            "position": [
-                1520,
-                400
-            ]
-        },
-        {
-            "parameters": {},
-            "id": "hold-no-action",
-            "name": "继续持有 - 可选更新止损",
-            "type": "n8n-nodes-base.noOp",
-            "typeVersion": 1,
-            "position": [
-                1520,
-                600
-            ]
+          ]
         }
-    ],
-    "connections": {
-        "每日15:10触发 (工作日)": {
-            "main": [
-                [
-                    {
-                        "node": "读取飞书【持仓管理】",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "读取飞书【持仓管理】": {
-            "main": [
-                [
-                    {
-                        "node": "转换数据格式",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "转换数据格式": {
-            "main": [
-                [
-                    {
-                        "node": "调用 /check_positions",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "调用 /check_positions": {
-            "main": [
-                [
-                    {
-                        "node": "拆分检查结果",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "拆分检查结果": {
-            "main": [
-                [
-                    {
-                        "node": "检查是否止损",
-                        "type": "main",
-                        "index": 0
-                    },
-                    {
-                        "node": "检查是否止盈",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "检查是否止损": {
-            "main": [
-                [
-                    {
-                        "node": "发送止损警报",
-                        "type": "main",
-                        "index": 0
-                    }
-                ],
-                [
-                    {
-                        "node": "继续持有 - 可选更新止损",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
-        },
-        "检查是否止盈": {
-            "main": [
-                [
-                    {
-                        "node": "发送止盈通知",
-                        "type": "main",
-                        "index": 0
-                    }
-                ],
-                [
-                    {
-                        "node": "继续持有 - 可选更新止损",
-                        "type": "main",
-                        "index": 0
-                    }
-                ]
-            ]
+      },
+      "id": "75963dc7-7b04-46eb-9ad9-ab174c12b102",
+      "name": "每日15:10触发 (工作日)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2640,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "bitable",
+        "operation": "bitable:table:record:search",
+        "app_toke": "RVghbRvYgacqs3s82qkcl83bn7e",
+        "table_id": "tblKGT8D4rDur8Gi",
+        "page_size": 100,
+        "body": "{\n  \"filter\": {\n    \"conjunction\": \"and\",\n    \"conditions\": [\n      {\n        \"field_name\": \"持仓状态\",\n        \"operator\": \"is\",\n        \"value\": [\"持仓\"]\n      }\n    ]\n  }\n}"
+      },
+      "id": "5a299a16-78aa-4c5c-bfdc-8928c7c09d61",
+      "name": "读取飞书【持仓管理】",
+      "type": "n8n-nodes-feishu-lite.feishuNode",
+      "typeVersion": 1,
+      "position": [
+        -2416,
+        176
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "feishuCredentialsApi": {
+          "id": "RcP0KB4O5l2Y95Bs",
+          "name": "Feishu account 2"
         }
+      },
+      "onError": "continueRegularOutput"
     },
-    "settings": {
-        "executionOrder": "v1"
+    {
+      "parameters": {
+        "jsCode": "// 转换飞书记录为 API 请求格式\nconst items = $input.all();\n\n// 辅助函数：提取飞书字段值（处理富文本格式）\nfunction extractValue(field) {\n    if (!field) return '';\n    // 如果是数组（富文本格式），提取第一个元素的text\n    if (Array.isArray(field)) {\n        return field[0]?.text || field[0] || '';\n    }\n    // 如果是对象（单选格式），提取text或value\n    if (typeof field === 'object') {\n        return field.text || field.value || String(field);\n    }\n    // 普通值直接返回\n    return String(field);\n}\n\n// 检查是否有数据\nif (!items || items.length === 0 || !items[0].json.data?.items) {\n    console.log('⚠️ 无持仓数据');\n    return [{ json: { positions: [], total: 0 } }];\n}\n\nconst records = items[0].json.data.items;\nconst positions = records.map(item => {\n  const fields = item.fields || {};\n  return {\n    code: extractValue(fields['代码']),\n    market: extractValue(fields['市场']) || 'CN',\n    buy_price: parseFloat(fields['买入价']) || 0,\n    current_stop: parseFloat(fields['当前止损']) || 0,\n    target_price: parseFloat(fields['目标价']) || 0,\n    record_id: item.record_id || ''\n  };\n}).filter(p => p.code);\n\nconsole.log(`📊 Found ${positions.length} positions to check`);\nreturn [{ json: { positions, total: positions.length } }];"
+      },
+      "id": "5612ad77-cd97-4899-be09-6dc28b710c07",
+      "name": "转换数据格式",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2192,
+        176
+      ],
+      "alwaysOutputData": true
     },
-    "staticData": null,
-    "meta": {
-        "templateCredsSetupCompleted": true
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://jpthermjdexc.ap-northeast-1.clawcloudrun.com/check_positions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "a8bbfb9e-22d8-42c2-84cf-03bf86b2d97e",
+      "name": "调用 /check_positions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -1968,
+        176
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
     },
-    "pinData": {},
-    "versionId": "v8.0-position-monitor-v1",
-    "triggerCount": 0,
-    "tags": []
+    {
+      "parameters": {
+        "fieldToSplitOut": "positions",
+        "options": {}
+      },
+      "id": "2a77bcc7-2f9f-4c12-b932-4151f2994bf4",
+      "name": "拆分检查结果",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        -1760,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "sell-check",
+              "leftValue": "={{ $json.action }}",
+              "rightValue": "SELL",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "3a31c405-c723-4176-89d6-bbd71fa6301c",
+      "name": "是否需要卖出?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1536,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 构建卖出通知卡片\nconst data = $json;\nconst action = data.action || 'UNKNOWN';\n\nlet color = 'grey';\nlet emoji = '📊';\nlet title = '交易提醒';\n\nif (action === 'SELL_STOP') {\n    color = 'red';\n    emoji = '🔴';\n    title = `${emoji} 止损警报: ${data.code}`;\n} else if (action === 'SELL_TARGET') {\n    color = 'green';\n    emoji = '🟢';\n    title = `${emoji} 止盈达标: ${data.code}`;\n}\n\nconst cardContent = [\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `**现价**: ${data.current_price}\\n**原因**: ${data.reason}\\n**收益率**: ${data.pnl_percent}%`\n    }\n  },\n  { tag: 'hr' },\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: action === 'SELL_STOP' ? '⚠️ **建议立即卖出止损**' : '🎯 **恭喜达到目标价！**'\n    }\n  }\n];\n\nreturn {\n  json: {\n    card_color: color,\n    card_content: cardContent,\n    header_title: title\n  }\n};"
+      },
+      "id": "b11337b1-ecfd-4b2f-8d7f-1eef397b921c",
+      "name": "构建卖出通知卡片",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        64
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "message:send",
+        "receive_id_type": "user_id",
+        "receive_id": "bg99a8dc",
+        "msg_type": "interactive",
+        "content": "={{\nJSON.stringify({\n  \"config\": {\n    \"wide_screen_mode\": true\n  },\n  \"header\": {\n    \"template\": $json.card_color,\n    \"title\": {\n      \"content\": $json.header_title,\n      \"tag\": \"plain_text\"\n    }\n  },\n  \"elements\": $json.card_content\n})\n}}"
+      },
+      "id": "e729495d-0723-4f34-80f7-86a178fd4364",
+      "name": "发送卖出通知",
+      "type": "n8n-nodes-feishu-lite.feishuNode",
+      "typeVersion": 1,
+      "position": [
+        -1088,
+        64
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "feishuCredentialsApi": {
+          "id": "RcP0KB4O5l2Y95Bs",
+          "name": "Feishu account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 构建持有通知卡片\nconst data = $json;\n\nlet updateInfo = '';\nif (data.new_stop && data.new_stop > 0) {\n    updateInfo = `\\n📈 **新止损价**: ${data.new_stop} (已上调)`;\n}\n\nconst cardContent = [\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `**股票**: ${data.code}\\n**现价**: ${data.current_price}\\n**收益率**: ${data.pnl_percent}%${updateInfo}`\n    }\n  },\n  { tag: 'hr' },\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `${data.reason || '继续持有'}`\n    }\n  }\n];\n\nreturn {\n  json: {\n    card_color: 'blue',\n    card_content: cardContent,\n    header_title: `⏳ 持有中: ${data.code}`\n  }\n};"
+      },
+      "id": "66fd5d8a-cc07-438a-b512-aa9e9b0d1762",
+      "name": "构建持有通知卡片",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1312,
+        272
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "message:send",
+        "receive_id_type": "user_id",
+        "receive_id": "bg99a8dc",
+        "msg_type": "interactive",
+        "content": "={{\nJSON.stringify({\n  \"config\": {\n    \"wide_screen_mode\": true\n  },\n  \"header\": {\n    \"template\": $json.card_color,\n    \"title\": {\n      \"content\": $json.header_title,\n      \"tag\": \"plain_text\"\n    }\n  },\n  \"elements\": $json.card_content\n})\n}}"
+      },
+      "id": "e9b839a4-790f-42be-aec6-696b2dc9043c",
+      "name": "发送持有通知",
+      "type": "n8n-nodes-feishu-lite.feishuNode",
+      "typeVersion": 1,
+      "position": [
+        -1088,
+        272
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "feishuCredentialsApi": {
+          "id": "RcP0KB4O5l2Y95Bs",
+          "name": "Feishu account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "stop-update-check",
+              "leftValue": "={{ $('拆分检查结果').item.json.new_stop }}",
+              "rightValue": "={{ $('拆分检查结果').item.json.current_stop || 0 }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-stop-update-001",
+      "name": "止损是否需要更新?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "bitable",
+        "operation": "bitable:table:record:update",
+        "app_toke": "RVghbRvYgacqs3s82qkcl83bn7e",
+        "table_id": "tblKGT8D4rDur8Gi",
+        "record_id": "={{ $('拆分检查结果').item.json.record_id }}",
+        "body": "={{ JSON.stringify({ \"fields\": { \"当前止损\": $('拆分检查结果').item.json.new_stop } }) }}"
+      },
+      "id": "update-stop-loss-001",
+      "name": "更新止损价到飞书",
+      "type": "n8n-nodes-feishu-lite.feishuNode",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        180
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "feishuCredentialsApi": {
+          "id": "RcP0KB4O5l2Y95Bs",
+          "name": "Feishu account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "id": "no-update-needed-001",
+      "name": "止损无需更新",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        360
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "每日15:10触发 (工作日)": {
+      "main": [
+        [
+          {
+            "node": "读取飞书【持仓管理】",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "读取飞书【持仓管理】": {
+      "main": [
+        [
+          {
+            "node": "转换数据格式",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "转换数据格式": {
+      "main": [
+        [
+          {
+            "node": "调用 /check_positions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "调用 /check_positions": {
+      "main": [
+        [
+          {
+            "node": "拆分检查结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "拆分检查结果": {
+      "main": [
+        [
+          {
+            "node": "是否需要卖出?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "是否需要卖出?": {
+      "main": [
+        [
+          {
+            "node": "构建卖出通知卡片",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "构建持有通知卡片",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "构建卖出通知卡片": {
+      "main": [
+        [
+          {
+            "node": "发送卖出通知",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "构建持有通知卡片": {
+      "main": [
+        [
+          {
+            "node": "发送持有通知",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "发送持有通知": {
+      "main": [
+        [
+          {
+            "node": "止损是否需要更新?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "止损是否需要更新?": {
+      "main": [
+        [
+          {
+            "node": "更新止损价到飞书",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "止损无需更新",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "v8.0-position-monitor-v5-auto-stoploss",
+  "meta": {
+    "instanceId": "2f742d99bafc29685192c328e0fdaa64b8db6ce3b25050806eb96df939878538"
+  },
+  "id": "tPdxaYo0ZfhJe3xl",
+  "tags": []
 }
