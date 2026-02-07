@@ -1,0 +1,519 @@
+{
+  "name": "AH Stock V9.3 Titan (Full Optimized)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 17 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "55eff146-43cc-4116-9834-ae202706431f",
+      "name": "定时触发_工作日17:30(北京时间)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        14112,
+        7232
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://jpthermjdexc.ap-northeast-1.clawcloudrun.com/market",
+        "options": {}
+      },
+      "id": "40451dc7-5de4-40ca-908a-a7f263b4afba",
+      "name": "Global Context (API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        14320,
+        7232
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1_MqQPC5DzLTarOM4hJ9_ajUX20piCiD6YmeM6Cp5Iys/edit?gid=0#gid=0",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "stock list",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "94d0eb6e-eb6a-4a48-b279-99e1c38affe7",
+      "name": "读取股票列表",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        14512,
+        7232
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "OKN7AHfMulimnqoc",
+          "name": "Google Sheets account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// 1. 获取所有股票数据\nconst items = $('读取股票列表').all();\n\n// 2. 初始化全局游标\nlet staticData;\ntry {\n    staticData = getWorkflowStaticData('global');\n} catch(e) {\n    try {\n        staticData = $getWorkflowStaticData('global');\n    } catch(e2) {\n        console.log(\"Error getting static data: \" + e2.message);\n        throw new Error(\"Unable to access getWorkflowStaticData. Ensure Code Node Mode is 'Run Once for All Items'.\");\n    }\n}\n\nstaticData.nextIndex = 0;\nstaticData.total = items.length;\nstaticData.stockList = items.map(idx => idx.json);\n\nconsole.log(`Initialized Manual Loop. Total items: ${items.length}`);\nreturn { json: { status: \"Loop Initialized\", total: items.length } };\n"
+      },
+      "id": "39c6f8ee-d50e-42eb-adca-09096f42d445",
+      "name": "初始化循环",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        14720,
+        7232
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nlet staticData;\ntry {\n    staticData = getWorkflowStaticData('global');\n} catch(e) {\n    staticData = $getWorkflowStaticData('global');\n}\n\nconst idx = staticData.nextIndex || 0;\nconst list = staticData.stockList;\n\nif (idx >= list.length) {\n    console.log(\"✅ Loop Finished. Total processed: \" + list.length);\n    return null;\n}\n\nconst currentStock = list[idx];\nconst progress = Math.round((idx + 1) / list.length * 100);\nconsole.log(`⏳ Processing [${idx + 1}/${list.length}] (${progress}%): ${currentStock.code}`);\n\nstaticData.nextIndex = idx + 1;\n\nreturn { json: currentStock };\n"
+      },
+      "id": "885e6f5c-0997-48d5-aeff-f0e2183f6b7b",
+      "name": "手工循环控制器",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        14912,
+        7232
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://jpthermjdexc.ap-northeast-1.clawcloudrun.com/analyze_full",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "code",
+              "value": "={{ $json.code }}"
+            },
+            {
+              "name": "balance",
+              "value": "={{ $json.balance || 100000 }}"
+            },
+            {
+              "name": "risk",
+              "value": "={{ $json.risk || 0.01 }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "id": "af3356bf-db33-4e28-8d92-522b8e40717f",
+      "name": "Full Stack Analysis (API V9)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        15120,
+        7232
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.tavily.com/search",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "={{ $env.TAVILY_API_KEY || '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' }}"
+            },
+            {
+              "name": "query",
+              "value": "={{ $json.name }} 最新新闻 利好 利空"
+            },
+            {
+              "name": "include_answer",
+              "value": "basic"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "b42af4c2-8af1-419c-a636-114b3fe69ddb",
+      "name": "Tavily新闻搜索",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        15312,
+        7232
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// V9.3 Fix: 从 API 节点读取分析数据\nconst data = $('Full Stack Analysis (API V9)').first().json;\nconst marketStatus = $('Global Context (API)').first().json.market_status || \"Unknown\"; \n\nlet isError = false;\nlet errorMsg = \"\";\n\nif (data.error) {\n    isError = true;\n    errorMsg = JSON.stringify(data.error);\n} else if (!data.technical) {\n    isError = true;\n    errorMsg = \"API V9 returned no technical data (8-Layer Exhaustion).\";\n}\n\nif (isError) {\n    return {\n        json: {\n            prompt: `System Error Alert: The analysis API failed for stock ${data.code || 'unknown'}. Error: ${errorMsg}. Please generate a short report stating that data acquisition failed and human review is needed.`,\n            raw_data: data,\n            is_error: true\n        }\n    };\n}\n\nconst tech = data.technical || {};\nconst sig = data.signal || {};\nconst risk = data.risk_ctrl || {};\n\n// 从当前节点获取 Tavily 新闻数据\nlet news_text = \"未搜索到新闻\";\ntry {\n    const news = $json;  // 当前节点收到的是 Tavily 输出\n    if (news.results) {\n        news_text = news.results.map(r => `- ${r.title}`).join('\\n');\n    } else if (news.answer) {\n        news_text = news.answer;\n    }\n} catch(e) {}\n\n// ==================== V9.3 ETF 识别逻辑 ====================\nlet etf_instruction = \"\";\nconst codeStr = String(data.code || '');\nconst market = data.market || 'CN';\n\n// 港股ETF识别 (0xxxx, 1xxxx, 5xxxx 开头通常是ETF)\nif (market === 'HK' && (codeStr.startsWith('0') || codeStr.startsWith('1') || codeStr.startsWith('5'))) {\n    etf_instruction = `\n\n### 📈 ETF特殊处理\n⚠️ 这是**港股ETF**，策略应以跟踪大盘指数为主，避免过度交易。\n- 优先分析其跟踪的底层资产走势（如恒生指数、纳指100、黄金、白银等）\n- ETF不适合短线频繁操作，建议中长线持有或波段操作\n- 止损可适当放宽，但需关注折溢价率`;\n}\n// A股ETF识别 (51xxxx, 15xxxx, 16xxxx 开头)\nelse if (market === 'CN' && (codeStr.startsWith('51') || codeStr.startsWith('15') || codeStr.startsWith('16'))) {\n    etf_instruction = `\n\n### 📈 ETF特殊处理\n⚠️ 这是**A股ETF**，请重点分析其跟踪的底层指数或行业板块走势。\n- 适合作为行业配置工具，而非短线投机\n- 关注成交量和折溢价率\n- 可结合行业轮动逻辑进行波段操作`;\n}\n// ==============================================================\n\nconst prompt = `# 决策仪表盘分析请求 (Titan V9.3 Core)\n\n## 股票基础\n- 代码: ${data.code} (${data.market})\n- 大盘环境: ${marketStatus}\n- 现价: ${tech.current_price}\n\n## 信号系统 (8-Layer Shield)\n- 核心信号: ${sig.signal}\n- 趋势评分: ${sig.trend_score}/100\n- 理由: ${sig.signal_reasons ? sig.signal_reasons.join(', ') : '无'}\n\n## 风控参数\n- 止损价: ${sig.stop_loss}\n- 目标价: ${sig.take_profit}\n- ATR波动: ${tech.atr14}\n- 建议仓位: ${risk.suggested_position} 手 (基于1%风险)\n\n## 技术指标\n- MA排列: ${tech.ma_alignment} (${tech.ma5}/${tech.ma20})\n- EMA趋势: 13日线 ${tech.ema13} vs 26日线 ${tech.ema26}\n- 乖离率: ${tech.bias_ma5}%\n- RSI(14): ${tech.rsi14}\n- 量比: ${tech.volume_ratio}\n\n## 新闻摘要\n${news_text}${etf_instruction}\n\n请基于以上数据，用简练的专业术语生成交易计划。`;\n\nlet risk_instruction = \"\";\nif (marketStatus === 'Bear' || marketStatus === 'Crash') {\n    risk_instruction = `\n!!! 🔴 严重警告：当前处于熊市/暴跌环境 (${marketStatus}) !!!\n1. **严格标准**：仅允许评分>85且有重大利好的个股操作。\n2. **强制轻仓**：建议仓位必须减半，或者直接建议空仓。\n3. **寻找做空机会**：如果是港股，优先寻找做空逻辑；如果是A股，建议以\"观望\"为主。\n4. **措辞严厉**：请在核心结论中用粗体强调大盘风险。`;\n}\n\nreturn {\n    json: {\n        prompt: prompt + risk_instruction,\n        technical: tech, \n        raw_data: data,\n        is_etf: etf_instruction !== \"\"\n    }\n};"
+      },
+      "id": "86ca1e06-b870-4fc9-a915-ff6b302b1e06",
+      "name": "构建AI提示词",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        15504,
+        7232
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3-pro-image-preview",
+        "options": {
+          "maxOutputTokens": 2048,
+          "temperature": 0.3
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        15520,
+        7440
+      ],
+      "id": "cb8b1369-8c04-456d-a595-6d36e94dec75",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "V4cRtuj3j8gaQfEU",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "options": {
+          "systemMessage": "You are a professional Financial Analyst Agent (Titan V9.3 Edition). \nYour Role: Analyze stock data (Technical + Fundamental + News) and generate a clear, actionable trading plan in structured JSON format.\n\n### Input Data:\n- Technical Indicators (MA, RSI, ATR, etc.)\n- Signal Logic (V9.0 8-Layer Shield)\n- Market Context (Bull/Bear/Crash)\n- News Summary (Chinese)\n- ETF Detection (if applicable)\n\n### Language Requirement:\n- **JSON Keys**: MUST be in English (e.g. `analysis_summary`).\n- **Content Values**: MUST be in **Simplified Chinese (简体中文)** (e.g. `\"trend_prediction\": \"看涨\"`)\n\n### Output Requirement:\nReturn ONLY a valid JSON object. No markdown formatting, no code blocks (` ```json `), just the raw JSON.\n\n### JSON Schema:\n{\n  \"stock_name\": \"String\",\n  \"analysis_summary\": \"One sentence summary in Chinese\",\n  \"trend_prediction\": \"看涨/看跌/中性\",\n  \"sentiment_score\": 0-100,\n  \"decision_type\": \"buy/sell/hold/wait\",\n  \"operation_advice\": \"Clear instruction in Chinese\",\n  \"dashboard\": {\n    \"core_conclusion\": {\n      \"signal_type\": \"强烈买入/买入/观望/卖出\",\n      \"one_sentence\": \"Detailed reasoning in Chinese...\",\n      \"position_advice\": {\n        \"no_position\": \"等待 / 开仓10%\",\n        \"has_position\": \"持有 / 减仓 / 清仓\"\n      }\n    },\n    \"battle_plan\": {\n      \"sniper_points\": {\n        \"ideal_buy\": 0.00,\n        \"stop_loss\": 0.00,\n        \"take_profit\": 0.00\n      },\n      \"checklist\": [\"均线多头排列\", \"RSI未超买\", \"量比正常\"]\n    },\n    \"intelligence\": {\n      \"risk_alerts\": [\"风险1\", \"风险2\"],\n      \"sentiment_summary\": \"News analysis in Chinese...\"\n    }\n  }\n}\n\n### Example Output:\n{\n  \"stock_name\": \"腾讯控股\",\n  \"analysis_summary\": \"技术面偏多但受大盘拖累，建议轻仓观望\",\n  \"trend_prediction\": \"中性偏多\",\n  \"sentiment_score\": 62,\n  \"decision_type\": \"hold\",\n  \"operation_advice\": \"可小仓位试探性布局，严格止损\",\n  \"dashboard\": {\n    \"core_conclusion\": {\n      \"signal_type\": \"观望\",\n      \"one_sentence\": \"短期均线金叉但量能不足，等待放量确认\",\n      \"position_advice\": {\n        \"no_position\": \"等待突破后再入场\",\n        \"has_position\": \"持有，止损设在支撑位下方\"\n      }\n    },\n    \"battle_plan\": {\n      \"sniper_points\": {\n        \"ideal_buy\": 380.00,\n        \"stop_loss\": 365.00,\n        \"take_profit\": 420.00\n      },\n      \"checklist\": [\"MA5>MA10 ✓\", \"RSI 55 适中\", \"量比0.8 偏弱\"]\n    },\n    \"intelligence\": {\n      \"risk_alerts\": [\"大盘走弱\", \"美联储加息预期\"],\n      \"sentiment_summary\": \"近期无重大利好利空，市场情绪偏谨慎\"\n    }\n  }\n}\n\n### Rules:\n1. If Market is 'Bear' or 'Crash', be extremely conservative. Penalize score by 20 points.\n2. Stop Loss must be respected. If current price < stop loss, decision is SELL.\n3. NEVER use placeholder values (0.00) for stop_loss/take_profit. Calculate based on ATR.\n4. sentiment_score must reflect: technical (40%) + news (30%) + market context (30%).\n5. If data contains ETF info, adjust strategy for index-tracking instruments.\n6. Do not hallucinate data. Use provided numbers."
+        }
+      },
+      "id": "82d30671-da51-49ce-8896-2657c4dd1eb5",
+      "name": "AI分析Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 2,
+      "position": [
+        15664,
+        7232
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 【全选替换】解析AI分析结果 - V9.3 JSON自动修复版\nconst aiOutput = $json.output || $json.content || $json.response || $json;\n\n// 从 \"构建AI提示词\" 节点找回原始技术数据\nlet technical, rawData;\ntry {\n  const upstream = $('构建AI提示词').last().json;\n  technical = upstream.technical || {};\n  rawData = upstream.raw_data || {};\n} catch (e) {\n  technical = $json.technical || {}; \n  rawData = $json.raw_data || {};\n}\n\n// ==================== V9.3 JSON 自动修复函数 ====================\nfunction repairJSON(str) {\n  let s = str;\n  \n  // 1. 移除 markdown 代码块\n  s = s.replace(/```json\\s*/gi, '').replace(/```\\s*/g, '');\n  \n  // 2. 提取 JSON 对象\n  const jsonStart = s.indexOf('{');\n  const jsonEnd = s.lastIndexOf('}') + 1;\n  if (jsonStart >= 0 && jsonEnd > jsonStart) {\n    s = s.substring(jsonStart, jsonEnd);\n  }\n  \n  // 3. 修复常见问题\n  // 3.1 移除尾部逗号 (trailing commas)\n  s = s.replace(/,\\s*([\\]}])/g, '$1');\n  \n  // 3.2 修复未闭合的字符串 (在行尾添加缺失的引号)\n  s = s.replace(/:\\s*\"([^\"]*?)(\\n|$)/g, ': \"$1\"$2');\n  \n  // 3.3 修复单引号为双引号\n  s = s.replace(/'/g, '\"');\n  \n  // 3.4 移除控制字符\n  s = s.replace(/[\\x00-\\x1F\\x7F]/g, (char) => {\n    if (char === '\\n' || char === '\\r' || char === '\\t') return char;\n    return '';\n  });\n  \n  // 3.5 修复数值后面缺少逗号的问题\n  s = s.replace(/(\\d)\\s*\\n\\s*\"/g, '$1,\\n\"');\n  \n  // 3.6 修复布尔值/null后缺少逗号\n  s = s.replace(/(true|false|null)\\s*\\n\\s*\"/gi, '$1,\\n\"');\n  \n  return s;\n}\n// ==============================================================\n\ntry {\n  let jsonStr = typeof aiOutput === 'string' ? aiOutput : JSON.stringify(aiOutput);\n  \n  // 第一次尝试：直接解析\n  let data;\n  try {\n    // 基础清理\n    if (jsonStr.includes('```')) {\n      jsonStr = jsonStr.replace(/```json\\n?/g, '').replace(/```\\n?/g, '');\n    }\n    const start = jsonStr.indexOf('{');\n    const end = jsonStr.lastIndexOf('}') + 1;\n    if (start >= 0 && end > start) {\n      jsonStr = jsonStr.substring(start, end);\n    }\n    data = JSON.parse(jsonStr);\n  } catch (firstError) {\n    // 第二次尝试：自动修复后解析\n    console.log('⚠️ First parse failed, attempting auto-repair...');\n    const repairedStr = repairJSON(jsonStr);\n    try {\n      data = JSON.parse(repairedStr);\n      console.log('✅ JSON auto-repair successful!');\n    } catch (repairError) {\n      // 第三次尝试：使用正则提取关键字段\n      console.log('⚠️ Repair failed, extracting fields via regex...');\n      data = {\n        stock_name: (jsonStr.match(/\"stock_name\"\\s*:\\s*\"([^\"]+)\"/) || [])[1] || rawData.name,\n        analysis_summary: (jsonStr.match(/\"analysis_summary\"\\s*:\\s*\"([^\"]+)\"/) || [])[1] || '解析部分成功',\n        trend_prediction: (jsonStr.match(/\"trend_prediction\"\\s*:\\s*\"([^\"]+)\"/) || [])[1] || '中性',\n        sentiment_score: parseInt((jsonStr.match(/\"sentiment_score\"\\s*:\\s*(\\d+)/) || [])[1]) || 50,\n        decision_type: (jsonStr.match(/\"decision_type\"\\s*:\\s*\"([^\"]+)\"/) || [])[1] || 'hold',\n        operation_advice: (jsonStr.match(/\"operation_advice\"\\s*:\\s*\"([^\"]+)\"/) || [])[1] || '观望',\n        _repair_status: 'regex_fallback'\n      };\n    }\n  }\n  \n  const dashboard = data.dashboard || {};\n  \n  // Fallback Source: rawData > technical\n  const fallbackStopLoss = rawData.stop_loss || rawData.signal?.stop_loss || 0;\n  const fallbackTakeProfit = rawData.take_profit || rawData.signal?.take_profit || 0;\n  const fallbackSignal = rawData.signal_type || rawData.signal?.signal || '观望';\n  \n  const result = {\n    date: new Date().toISOString().split('T')[0],\n    code: technical.code || rawData.code || \"unknown\",\n    market: technical.market || rawData.market || \"CN\",\n    name: data.stock_name || technical.name || rawData.name || rawData.code,\n    \n    signal_type: dashboard.core_conclusion?.signal_type || data.trend_prediction || fallbackSignal,\n    sentiment_score: data.sentiment_score || 50,\n    operation_advice: data.operation_advice || '观望',\n    decision_type: data.decision_type || 'hold',\n    one_sentence: dashboard.core_conclusion?.one_sentence || data.analysis_summary || '',\n    \n    advice_no_position: dashboard.core_conclusion?.position_advice?.no_position || '',\n    advice_has_position: dashboard.core_conclusion?.position_advice?.has_position || '',\n    \n    entry_price: dashboard.battle_plan?.sniper_points?.ideal_buy || technical.support_level || 0,\n    stop_loss: dashboard.battle_plan?.sniper_points?.stop_loss || fallbackStopLoss,\n    take_profit: dashboard.battle_plan?.sniper_points?.take_profit || fallbackTakeProfit,\n    \n    current_price: technical.current_price,\n    atr14: technical.atr14,\n    bias_ma5: technical.bias_ma5,\n    rsi14: technical.rsi14,\n    volume_ratio: technical.volume_ratio,\n    ma_alignment: technical.ma_alignment,\n    \n    checklist: dashboard.battle_plan?.checklist?.join('\\n') || '',\n    risk_alerts: dashboard.intelligence?.risk_alerts?.join('\\n') || '',\n    news_summary: dashboard.intelligence?.sentiment_summary || '',\n    \n    raw_analysis: data,\n    _repair_status: data._repair_status || 'clean'  // 标记修复状态\n  };\n  \n  return [{ json: result }];\n  \n} catch (error) {\n  console.log('❌ All parsing attempts failed:', error.message);\n  return [{\n    json: {\n      date: new Date().toISOString().split('T')[0],\n      code: technical?.code || 'ERROR',\n      market: technical?.market || rawData?.market || 'CN',\n      name: technical?.name || rawData?.name,\n      signal_type: '解析失败',\n      one_sentence: 'AI返回格式异常，已尝试自动修复但失败',\n      current_price: technical?.current_price || 0,\n      bias_ma5: technical?.bias_ma5 || 0,\n      error: error.message,\n      raw_output: typeof aiOutput === 'string' ? aiOutput.substring(0, 500) : JSON.stringify(aiOutput).substring(0, 500),\n      _repair_status: 'failed'\n    }\n  }];\n}"
+      },
+      "id": "bbcffaa8-43d6-41bd-9918-130f22348744",
+      "name": "解析AI分析结果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        15936,
+        7232
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "bitable",
+        "operation": "bitable:table:record:batchAdd",
+        "app_toke": "RVghbRvYgacqs3s82qkcl83bn7e",
+        "table_id": "tblvrNDNrjAZwBZc",
+        "body": "={{\nJSON.stringify({\n  \"records\": [\n    {\n      \"fields\": {\n        \"日期\": new Date().getTime(),\n        \"市场\": $json.market || \"CN\",\n        \"代码\": $json.code || \"ERR\",\n        \"名称\": $json.name || \"Unknown\",\n        \"信号类型\": $json.signal_type || \"无信号\",\n        \"综合评分\": $json.sentiment_score || 0,\n        \"决策类型\": $json.decision_type || \"hold\",\n        \"操作建议\": $json.operation_advice || \"观望\",\n        \"核心结论\": $json.one_sentence || \"\",\n        \"现价\": $json.current_price || 0,\n        \"买入价\": String($json.entry_price || \"待定\"),\n        \"止损价\": String($json.stop_loss || \"待定\"),\n        \"目标价\": String($json.take_profit || \"待定\"),\n        \"ATR\": $json.atr14 || 0,\n        \"乖离率\": $json.bias_ma5 || 0,\n        \"RSI\": $json.rsi14 || 0,\n        \"量比\": $json.volume_ratio || 0,\n        \"均线形态\": $json.ma_alignment || \"\",\n        \"趋势评分\": $json.sentiment_score || 0,\n        \"建议手数\": $json.raw_data?.risk_ctrl?.suggested_position || 0,\n        \"检查清单\": $json.checklist || \"\",\n        \"风险警报\": $json.risk_alerts || \"\",\n        \"新闻摘要\": $json.news_summary || \"\",\n        \"空仓建议\": $json.advice_no_position || \"\",\n        \"持仓建议\": $json.advice_has_position || \"\",\n        \"是否ETF\": $json.raw_data?.is_etf ? \"是\" : \"否\",\n        \"数据源\": $json.raw_data?.data_source || \"unknown\",\n        \"解析状态\": $json._repair_status || \"clean\"\n      }\n    }\n  ]\n})\n}}"
+      },
+      "id": "8f8368cd-80ae-4321-8f68-14c492bc1604",
+      "name": "写入飞书",
+      "type": "n8n-nodes-feishu-lite.feishuNode",
+      "typeVersion": 1,
+      "position": [
+        16112,
+        7232
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "feishuCredentialsApi": {
+          "id": "RcP0KB4O5l2Y95Bs",
+          "name": "Feishu account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 【V9.3 Enhanced Card Builder】\nconst sourceNode = $('解析AI分析结果');\nlet sourceData = {};\n\nif (sourceNode && sourceNode.last()) {\n    sourceData = sourceNode.last().json;\n} else {\n    sourceData = $json; \n}\nconst root = sourceData; \n\nconst signal = root.signal_type || \"无信号\";\nconst score = root.sentiment_score || 0;\nconst advice = root.operation_advice || \"暂无建议\";\nconst summary = root.one_sentence || \"无详细结论\";\nconst stockName = root.name || \"股票\";\nconst code = root.code || \"\";\nconst currentPrice = root.current_price || 0;\nconst stopLoss = root.stop_loss || 0;\nconst takeProfit = root.take_profit || 0;\nconst decisionType = root.decision_type || 'hold';\n\n// ==================== V9.3 增强卡片颜色逻辑 ====================\nlet color = 'grey';\nlet headerEmoji = '📊';\nconst sigStr = signal.toString().toLowerCase();\n\n// 飞书卡片支持的颜色: blue, wathet, turquoise, green, yellow, orange, red, carmine, violet, purple, indigo, grey\nif (sigStr.includes('强烈买入') || sigStr.includes('strong buy') || score >= 85) {\n    color = 'turquoise';  // 青色 - 强烈买入信号\n    headerEmoji = '🚀';\n} else if (sigStr.includes('买入') || sigStr.includes('buy') || decisionType === 'buy') {\n    color = 'green';      // 绿色 - 普通买入信号\n    headerEmoji = '📈';\n} else if (sigStr.includes('强烈卖出') || sigStr.includes('strong sell') || score <= 15) {\n    color = 'carmine';    // 深红 - 强烈卖出信号\n    headerEmoji = '⚠️';\n} else if (sigStr.includes('卖出') || sigStr.includes('sell') || sigStr.includes('清仓') || decisionType === 'sell') {\n    color = 'red';        // 红色 - 普通卖出信号\n    headerEmoji = '📉';\n} else if (sigStr.includes('减仓') || sigStr.includes('reduce')) {\n    color = 'orange';     // 橙色 - 减仓信号\n    headerEmoji = '⚡';\n} else if (sigStr.includes('风险') || sigStr.includes('warn') || sigStr.includes('警告')) {\n    color = 'yellow';     // 黄色 - 风险警告\n    headerEmoji = '⚠️';\n} else if (sigStr.includes('观望') || sigStr.includes('wait') || sigStr.includes('hold') || decisionType === 'hold') {\n    color = 'blue';       // 蓝色 - 观望/持有\n    headerEmoji = '⏳';\n} else if (sigStr.includes('解析失败') || sigStr.includes('error')) {\n    color = 'violet';     // 紫色 - 系统错误\n    headerEmoji = '❌';\n}\n\n// 根据评分微调颜色（覆盖信号逻辑）\nif (score >= 80 && color === 'green') {\n    color = 'turquoise';  // 高分绿色升级为青色\n}\nif (score <= 20 && color === 'red') {\n    color = 'carmine';    // 低分红色升级为深红\n}\n// ==============================================================\n\n// 根据信号强度选择按钮样式\nlet buttonType = 'default';\nif (color === 'turquoise' || color === 'green') {\n    buttonType = 'primary';\n} else if (color === 'carmine' || color === 'red') {\n    buttonType = 'danger';\n}\n\nconst cardContent = [\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `**${signal}** | 评分: **${score}**/100 | ${advice}`\n    }\n  },\n  { tag: 'hr' },\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `💡 **核心结论**：\\n${summary}`\n    }\n  },\n  {\n    tag: 'div',\n    text: {\n      tag: 'lark_md',\n      content: `💰 现价: **${currentPrice}** | 止损: ${stopLoss} | 目标: ${takeProfit}`\n    }\n  },\n  {\n    tag: 'action',\n    actions: [\n      {\n        tag: 'button',\n        text: { tag: 'plain_text', content: '📊 查看完整数据表' },\n        type: buttonType,\n        url: 'https://xcnf59usubzt.feishu.cn/base/RVghbRvYgacqs3s82qkcl83bn7e?table=tblvrNDNrjAZwBZc'\n      }\n    ]\n  },\n  {\n    tag: 'note',\n    elements: [\n      { tag: 'plain_text', content: `V9.3 Titan | ${stockName}(${code}) | Score: ${score}` }\n    ]\n  }\n];\n\nreturn {\n  json: {\n    card_color: color,\n    card_content: cardContent,\n    header_title: `${headerEmoji} ${stockName} 每日分析`\n  }\n};"
+      },
+      "id": "a777eca7-a2db-4836-971d-965b8387b263",
+      "name": "构建通用卡片",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16320,
+        7232
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "message:send",
+        "receive_id_type": "user_id",
+        "receive_id": "bg99a8dc",
+        "msg_type": "interactive",
+        "content": "={{\nJSON.stringify({\n  \"config\": {\n    \"wide_screen_mode\": true\n  },\n  \"header\": {\n    \"template\": $json.card_color,\n    \"title\": {\n      \"content\": $json.header_title,\n      \"tag\": \"plain_text\"\n    }\n  },\n  \"elements\": $json.card_content\n})\n}}"
+      },
+      "id": "8dc58221-43e4-4b54-9093-4915b5d3960a",
+      "name": "发送通用消息",
+      "type": "n8n-nodes-feishu-lite.feishuNode",
+      "typeVersion": 1,
+      "position": [
+        16512,
+        7232
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "feishuCredentialsApi": {
+          "id": "RcP0KB4O5l2Y95Bs",
+          "name": "Feishu account 2"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": 35,
+        "unit": "seconds"
+      },
+      "id": "254f3595-4673-4e76-a738-ceee0565a0ae",
+      "name": "安抚反爬虫 (Wait 35s)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        16720,
+        7232
+      ],
+      "webhookId": "e1ea52ec-d4ef-46a2-8df1-2bb2e1cf506f"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "定时触发_工作日17:30(北京时间)": {
+      "main": [
+        [
+          {
+            "node": "Global Context (API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Global Context (API)": {
+      "main": [
+        [
+          {
+            "node": "读取股票列表",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "读取股票列表": {
+      "main": [
+        [
+          {
+            "node": "初始化循环",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "初始化循环": {
+      "main": [
+        [
+          {
+            "node": "手工循环控制器",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "手工循环控制器": {
+      "main": [
+        [
+          {
+            "node": "Full Stack Analysis (API V9)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Full Stack Analysis (API V9)": {
+      "main": [
+        [
+          {
+            "node": "Tavily新闻搜索",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tavily新闻搜索": {
+      "main": [
+        [
+          {
+            "node": "构建AI提示词",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "构建AI提示词": {
+      "main": [
+        [
+          {
+            "node": "AI分析Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI分析Agent": {
+      "main": [
+        [
+          {
+            "node": "解析AI分析结果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "解析AI分析结果": {
+      "main": [
+        [
+          {
+            "node": "写入飞书",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "写入飞书": {
+      "main": [
+        [
+          {
+            "node": "构建通用卡片",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "构建通用卡片": {
+      "main": [
+        [
+          {
+            "node": "发送通用消息",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "发送通用消息": {
+      "main": [
+        [
+          {
+            "node": "安抚反爬虫 (Wait 35s)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "安抚反爬虫 (Wait 35s)": {
+      "main": [
+        [
+          {
+            "node": "手工循环控制器",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI分析Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "34e09681-fb7e-4105-80b4-3eb20772e223",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2f742d99bafc29685192c328e0fdaa64b8db6ce3b25050806eb96df939878538"
+  },
+  "id": "FJlupWOGyW53ZJoG",
+  "tags": []
+}
