@@ -48,7 +48,7 @@ except ImportError:
 from fake_useragent import UserAgent
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-app = FastAPI(title="AkShare Quant API V9.0 (Titan Edition) + V8.0 Evolution", version="9.1")
+app = FastAPI(title="AkShare Quant API V9.4 (Titan + Name/ETF Fix)", version="9.4")
 
 # --- V8.0 Evolution: Circuit Breaker & Error Tracking ---
 error_counter = {
@@ -770,6 +770,7 @@ def analyze_full(req: AnalyzeRequest):
             "code": code,
             "name": stock_name,
             "is_etf": is_etf,
+            "data_source": "AkShare",
             "signal_type": sig['signal'],
             "trend_score": sig['trend_score'],
             "current_price": tech['current_price'],
