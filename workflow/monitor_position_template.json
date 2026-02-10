@@ -76,6 +76,15 @@
         "jsonBody": "={{ JSON.stringify($json) }}",
         "options": {
           "timeout": 120000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "YOUR_API_KEY"
+            }
+          ]
         }
       },
       "id": "a8bbfb9e-22d8-42c2-84cf-03bf86b2d97e",
@@ -301,7 +310,7 @@
   ],
   "pinData": {},
   "connections": {
-    "每日15:10触发 (工作日)": {
+    "每日16:40触发 (工作日港股收盘后)": {
       "main": [
         [
           {

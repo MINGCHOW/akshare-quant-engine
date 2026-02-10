@@ -39,3 +39,5 @@ logs/
 # Sensitive Documentation (local only, DO NOT push to GitHub)
 docs/MAINTENANCE.md
 docs/*_internal.md
+workflow/*.json
+!workflow/*_template.json

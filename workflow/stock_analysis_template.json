@@ -27,6 +27,15 @@
     {
       "parameters": {
         "url": "https://jpthermjdexc.ap-northeast-1.clawcloudrun.com/market",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "YOUR_API_KEY"
+            }
+          ]
+        },
         "options": {}
       },
       "id": "40451dc7-5de4-40ca-908a-a7f263b4afba",
@@ -121,6 +130,15 @@
         },
         "options": {
           "timeout": 90000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "YOUR_API_KEY"
+            }
+          ]
         }
       },
       "id": "af3356bf-db33-4e28-8d92-522b8e40717f",
@@ -146,7 +164,7 @@
           "parameters": [
             {
               "name": "api_key",
-              "value": "={{ $env.TAVILY_API_KEY || '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' }}"
+              "value": "={{ $env.TAVILY_API_KEY || 'YOUR_TAVILY_KEY' }}"
             },
             {
               "name": "query",
@@ -342,7 +360,7 @@
   ],
   "pinData": {},
   "connections": {
-    "定时触发_工作日17:30(北京时间)": {
+    "定时触发_工作日16:10(港股收盘后)": {
       "main": [
         [
           {
