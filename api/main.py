@@ -224,6 +224,28 @@ def get_market_context():
             except Exception:
                 pass
         
+        # Method 3: Yahoo Finance (V10.2 Fallback)
+        if hk_status == "Unknown" and yf:
+            try:
+                hsi = yf.Ticker("^HSI")
+                
+                # Try fast_info
+                try:
+                    hk_price = hsi.fast_info['last_price']
+                except:
+                    hk_price = 0
+                
+                # Get History for MA20
+                hsi_hist = hsi.history(period="1mo")
+                if not hsi_hist.empty:
+                    hk_ma20 = float(hsi_hist['Close'].rolling(20).mean().iloc[-1])
+                    if hk_price <= 0:
+                        hk_price = float(hsi_hist['Close'].iloc[-1])
+                    
+                    hk_status = "Bull" if hk_price > hk_ma20 else "Bear"
+            except Exception as e:
+                logger.warning(f"HK index (Method 3 Yahoo) failed: {e}")
+        
         # 涨跌家数统计
         up_count, down_count, flat_count = 0, 0, 0
         try:

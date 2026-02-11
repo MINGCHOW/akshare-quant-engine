@@ -368,8 +368,32 @@ class DataFetcher:
                 return float(price) if price else 0.0
                 
         except Exception as e:
-            logger.warning(f"Real-time fetch failed for {code}: {e}")
+            logger.warning(f"AkShare Spot fetch failed for {code}: {e}")
         
+        # --- V10.2: Yahoo Finance Fallback (HK Only) ---
+        if market == "HK" and yf:
+            try:
+                # Yahoo requires .HK suffix and 4-digit code usually? No, 0700.HK
+                # AkShare uses 00700. Yahoo uses 0700.HK or 00700.HK
+                clean_code = str(code).strip()
+                if clean_code.isdigit():
+                    yf_code = f"{int(clean_code):04d}.HK"
+                else:
+                    yf_code = clean_code
+                
+                ticker = yf.Ticker(yf_code)
+                # Try fast_info (newer yfinance)
+                try:
+                    price = ticker.fast_info['last_price']
+                    if price and price > 0: return float(price)
+                except:
+                    # Fallback to history
+                    hist = ticker.history(period="1d")
+                    if not hist.empty:
+                        return float(hist['Close'].iloc[-1])
+            except Exception as e:
+                logger.warning(f"YFinance fallback failed for {code}: {e}")
+
         return 0.0
 
     @staticmethod
@@ -391,5 +415,17 @@ class DataFetcher:
                 
         except Exception:
             pass
-            
+        
+        # --- V10.2 YFinance Name Fallback ---
+        if market == "HK" and yf:
+            try:
+                clean_code = str(code).strip()
+                yf_code = f"{int(clean_code):04d}.HK" if clean_code.isdigit() else clean_code
+                ticker = yf.Ticker(yf_code)
+                # Note: Yahoo names are English usually, but better than code
+                name = ticker.info.get('shortName') or ticker.info.get('longName')
+                if name: return name
+            except:
+                pass
+
         return code
