@@ -201,22 +201,25 @@ def get_market_context():
         cn_status = "Bull" if price > ma20 else "Bear"
         
         # V10.0: 港股市场判断 (恒生指数)
+        # 优先使用 index_zh_a_hist (稳定)，备用 stock_hk_index_daily_em (易超时)
         hk_status = "Unknown"
         hk_price = 0
         hk_ma20 = 0
         try:
-            hk_df = ak.stock_hk_index_daily_em(symbol="HSI")
+            # Method 1: Index History (Stable)
+            hk_df = ak.index_zh_a_hist(symbol="HSI", period="daily")
             if not hk_df.empty:
-                hk_price = float(hk_df['close'].iloc[-1])
-                hk_ma20 = float(hk_df['close'].rolling(20).mean().iloc[-1])
+                hk_price = float(hk_df['收盘'].iloc[-1])
+                hk_ma20 = float(hk_df['收盘'].rolling(20).mean().iloc[-1])
                 hk_status = "Bull" if hk_price > hk_ma20 else "Bear"
         except Exception as e:
-            logger.warning(f"HK index fetch failed: {e}")
+            logger.warning(f"HK index (Method 1) failed: {e}")
             try:
-                hk_df = ak.index_zh_a_hist(symbol="HSI", period="daily")
+                # Method 2: HK Index Daily (Fallback)
+                hk_df = ak.stock_hk_index_daily_em(symbol="HSI")
                 if not hk_df.empty:
-                    hk_price = float(hk_df['收盘'].iloc[-1])
-                    hk_ma20 = float(hk_df['收盘'].rolling(20).mean().iloc[-1])
+                    hk_price = float(hk_df['close'].iloc[-1])
+                    hk_ma20 = float(hk_df['close'].rolling(20).mean().iloc[-1])
                     hk_status = "Bull" if hk_price > hk_ma20 else "Bear"
             except Exception:
                 pass
@@ -291,8 +294,13 @@ def analyze_full(req: AnalyzeRequest):
             
         if suggested_shares < 100: suggested_shares = 0
         
-        stock_name = get_stock_name(code, market)
+        # V10.0: Use Cached Name & Realtime Price
+        stock_name = DataFetcher.get_stock_name(code, market)
         is_etf = detect_etf(code, market)
+        
+        realtime_price = DataFetcher.get_realtime_price(code, market)
+        if realtime_price > 0:
+            tech['current_price'] = realtime_price
         
         return {
             "date": datetime.datetime.now().strftime("%Y-%m-%d"),
@@ -369,6 +377,12 @@ def check_positions(req: PositionCheckRequest):
             # V10.0: 计算 ATR
             tech = calculate_technicals(df)
             atr = tech.get('atr14', 0)
+            
+            # V10.1: Use Realtime Price for Check
+            realtime_price = DataFetcher.get_realtime_price(code, "HK" if is_hk else "CN")
+            if realtime_price > 0:
+                current_price = realtime_price
+            
             if not atr or atr <= 0:
                 atr = current_price * 0.03
             

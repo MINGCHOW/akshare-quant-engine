@@ -11,7 +11,6 @@ import random
 import time
 import logging
 
-from fake_useragent import UserAgent
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # Optional libraries
@@ -44,12 +43,16 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Dynamic User-Agent Generator
-ua = UserAgent()
+# V10.0: Static User-Agent Pool (Remove fake_useragent dependency)
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36"
+]
 
 def get_headers():
     return {
-        "User-Agent": ua.random,
+        "User-Agent": random.choice(USER_AGENTS),
         "Accept": "*/*",
         "Connection": "keep-alive"
     }
@@ -321,3 +324,72 @@ class DataFetcher:
         except Exception as e:
             logger.error(f"Critical HK Fetch Error: {e}")
             return pd.DataFrame()
+
+    # --- V10.0 Real-time Spot Cache ---
+    _spot_cache = {
+        "CN": {"data": pd.DataFrame(), "time": 0},
+        "HK": {"data": pd.DataFrame(), "time": 0}
+    }
+
+    @staticmethod
+    def get_realtime_price(code: str, market: str = "CN") -> float:
+        """
+        V10.0: Get real-time spot price efficiently with caching (TTL 30s)
+        """
+        try:
+            now = time.time()
+            cache = DataFetcher._spot_cache[market]
+            
+            # Refresh cache if empty or older than 30s
+            if cache["data"].empty or (now - cache["time"] > 30):
+                if market == "HK":
+                     df = ak.stock_hk_spot_em()
+                else:
+                     df = ak.stock_zh_a_spot_em()
+                
+                if not df.empty:
+                    # Optimize: Index by code for O(1) lookup
+                    if '代码' in df.columns and '最新价' in df.columns:
+                         df['代码'] = df['代码'].astype(str)
+                         # Standardize codes
+                         if market == "HK":
+                             df['代码'] = df['代码'].apply(lambda x: f"{int(x):05d}" if x.isdigit() else x)
+                         cache["data"] = df.set_index('代码')
+                         cache["time"] = now
+            
+            # Lookup
+            df = cache["data"]
+            clean_code = str(code).strip().upper().replace("HK","").replace("SH","").replace("SZ","")
+            if market == "HK":
+                 clean_code = f"{int(clean_code):05d}" if clean_code.isdigit() else clean_code
+            
+            if clean_code in df.index:
+                price = df.loc[clean_code]['最新价']
+                return float(price) if price else 0.0
+                
+        except Exception as e:
+            logger.warning(f"Real-time fetch failed for {code}: {e}")
+        
+        return 0.0
+
+    @staticmethod
+    def get_stock_name(code: str, market: str = "CN") -> str:
+        """
+        V10.0: Get stock name from cached spot data
+        Same cache as get_realtime_price (TTL 30s works for names too)
+        """
+        try:
+            DataFetcher.get_realtime_price(code, market) # Trigger cache refresh
+            cache = DataFetcher._spot_cache[market]["data"]
+            
+            clean_code = str(code).strip().upper().replace("HK","").replace("SH","").replace("SZ","")
+            if market == "HK":
+                 clean_code = f"{int(clean_code):05d}" if clean_code.isdigit() else clean_code
+            
+            if clean_code in cache.index:
+                return str(cache.loc[clean_code]['名称'])
+                
+        except Exception:
+            pass
+            
+        return code

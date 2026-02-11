@@ -20,38 +20,12 @@ def safe_round(val, decimals=2):
         return 0.0
 
 
+from .fetcher import DataFetcher
+
 # --- Stock Name & ETF Detection ---
 def get_stock_name(code: str, market: str = "CN") -> str:
-    """获取股票真实名称"""
-    try:
-        clean_code = str(code).strip().upper().replace("HK", "").replace("SH", "").replace("SZ", "")
-        
-        if market == "HK":
-            try:
-                symbol = f"{int(clean_code):05d}"
-                df = ak.stock_hk_spot_em()
-                if not df.empty:
-                    match = df[df['代码'] == symbol]
-                    if not match.empty:
-                        return match.iloc[0]['名称']
-            except Exception as e:
-                logger.debug(f"HK name fetch failed: {e}")
-            
-            return f"{int(clean_code):05d}.HK"
-        else:
-            try:
-                df = ak.stock_zh_a_spot_em()
-                if not df.empty:
-                    match = df[df['代码'] == clean_code]
-                    if not match.empty:
-                        return match.iloc[0]['名称']
-            except Exception as e:
-                logger.debug(f"A-share name fetch failed: {e}")
-            
-            return clean_code
-    except Exception as e:
-        logger.warning(f"get_stock_name error: {e}")
-        return code
+    """获取股票真实名称 (Delegates to DataFetcher Cache)"""
+    return DataFetcher.get_stock_name(code, market)
 
 
 def detect_etf(code: str, market: str = "CN") -> bool:
