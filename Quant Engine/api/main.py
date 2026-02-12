@@ -381,32 +381,32 @@ def check_positions(req: PositionCheckRequest):
             else:
                 df = DataFetcher.get_a_share_history(code)
             
-            if df.empty:
-                results.append({
-                    "code": code,
-                    "action": "ERROR",
-                    "reason": "无法获取数据",
-                    "current_price": None,
-                    "new_stop": None
-                })
-                continue
-            
-            current_price = float(df['close'].iloc[-1])
-            current_stop = pos.current_stop
-            target = pos.target_price
-            buy_price = pos.buy_price
-            
-            # V10.0: 计算 ATR
-            tech = calculate_technicals(df)
-            atr = tech.get('atr14', 0)
-            
-            # V10.1: Use Realtime Price for Check
+            # V10.3: Spot-Only Fallback Logic
             realtime_price = DataFetcher.get_realtime_price(code, "HK" if is_hk else "CN")
+            
+            if df.empty:
+                if realtime_price > 0:
+                    current_price = realtime_price
+                    atr = current_price * 0.03 # Default ATR
+                else:
+                    results.append({
+                        "code": code,
+                        "action": "ERROR",
+                        "reason": "无法获取数据 (History & Spot Failed)",
+                        "current_price": None,
+                        "new_stop": None
+                    })
+                    continue
+            else:
+                current_price = float(df['close'].iloc[-1])
+                tech = calculate_technicals(df)
+                atr = tech.get('atr14', 0)
+                if not atr or atr <= 0:
+                    atr = current_price * 0.03
+            
+            # Use Realtime if available (Overwrite History Close)
             if realtime_price > 0:
                 current_price = realtime_price
-            
-            if not atr or atr <= 0:
-                atr = current_price * 0.03
             
             if current_stop > 0 and current_price <= current_stop:
                 action = "SELL_STOP"

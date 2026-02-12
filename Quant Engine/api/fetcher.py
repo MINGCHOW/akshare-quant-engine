@@ -417,10 +417,20 @@ class DataFetcher:
             pass
         
         # --- V10.2 YFinance Name Fallback ---
-        if market == "HK" and yf:
+        if yf:
             try:
                 clean_code = str(code).strip()
-                yf_code = f"{int(clean_code):04d}.HK" if clean_code.isdigit() else clean_code
+                yf_code = code
+                
+                # Format Ticker
+                if market == "HK":
+                    yf_code = f"{int(clean_code):04d}.HK" if clean_code.isdigit() else clean_code
+                elif market == "CN":
+                     # Auto detect suffix
+                     if clean_code.startswith("6"): yf_code = f"{clean_code}.SS"
+                     elif clean_code.startswith(("0", "3")): yf_code = f"{clean_code}.SZ"
+                     elif clean_code.startswith(("4", "8")): yf_code = f"{clean_code}.BJ"
+
                 ticker = yf.Ticker(yf_code)
                 # Note: Yahoo names are English usually, but better than code
                 name = ticker.info.get('shortName') or ticker.info.get('longName')
